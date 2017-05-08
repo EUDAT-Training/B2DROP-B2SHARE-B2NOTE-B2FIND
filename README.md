@@ -1,4 +1,4 @@
-OP-B2SHARE-B2NOTE-B2FIND training
+# B2DROP-B2SHARE-B2NOTE-B2FIND training
 **An example workflow for data management**
 
 <img align="right" src="img/B2FIND.png" width="211px">
