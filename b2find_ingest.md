@@ -35,7 +35,7 @@ You can use the python script `b2find_ingest.py` in the mode `m` to map the harv
 
 ```
 
- If all works fine you should find the harvested XML files in the directory
+If all works fine you should find the mapped JSON files in the directory
 
 ```sh
 oaidata/b2share-marcxml/SET/json/
@@ -43,4 +43,17 @@ oaidata/b2share-marcxml/SET/json/
  
 ## Uploading
 
-T.b.d. !!!
+You can use the python script `b2find_ingest.py` in the mode `u` to uplaod the mapped JSON files to the B2FIND catalogue and portal. Beside the options used above you ahve to specify the address of B2FIND portal (option `-i`) and a valid API key (option '--api-key). 
+
+
+```sh
+./b2find_ingest.py --mode u -c b2share -s https://trng-b2share.eudat.eu/api/oai2d --mdprefix marcxml -i trng-b2find.dkrz.de --auth <API-KEY>
+```
+
+If all works fine you should find the uploaded records at
+
+```sh
+http://trng-b2find.eudat.eu/groups/b2share
+```
+
+.... 
