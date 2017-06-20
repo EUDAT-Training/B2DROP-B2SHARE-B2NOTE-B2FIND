@@ -15,14 +15,17 @@ THE SOFTWARE.
 """
 
 import optparse
-import os, sys, time
+import os, sys, io, time, datetime
 from collections import OrderedDict
 # For HARVESTER
 import sickle as SickleClass
 import lxml.etree as etree
+import uuid
 # For MAPPER
 import simplejson as json
 import re, codecs 
+import iso639
+import Levenshtein as lvs
 # For UPLOADER
 from urllib import quote
 from urllib2 import Request, urlopen
@@ -69,13 +72,17 @@ class HARVESTER():
         if (not os.path.isdir(subsetdir+'/xml')):
             os.makedirs(subsetdir+'/xml')
 
-        print 'Store xml files in %s/xml' % subsetdir 
+        print ' |-Output path\t %s/xml' % subsetdir 
+        print '    |   | %-4s | %-20s | %-45s |\n    ---------------------------------------------------------------' % ('#','OAI Identifier','File Identifier')
         for record in records:
             stats['count']+=1
             oai_id = record.header.identifier
-            xmlfile = '%s/xml/%s.xml' % (subsetdir,os.path.basename(oai_id))
+            # generate a uniquely identifier for this dataset:
+            uid = str(uuid.uuid5(uuid.NAMESPACE_DNS, oai_id.encode('ascii','replace')))
+                
+            xmlfile = '%s/xml/%s.xml' % (subsetdir,os.path.basename(uid))
             try:
-                print '    | h | %-4d | %-45s |' % (stats['count'],oai_id)               
+                print '    | h | %-4d | %-20s | %-45s |' % (stats['count'],oai_id,uid)               
                 # get the raw xml content:    
                 metadata = etree.fromstring(record.raw)
                 if (metadata is not None):
@@ -133,6 +140,320 @@ class MAPPER():
                    
             return disctab
 
+    def date2UTC(self,old_date):
+        """
+        changes date to UTC format
+        """
+        if type(old_date) is list :
+            old_date=old_date[0]
+        # UTC format =  YYYY-MM-DDThh:mm:ssZ
+        try:
+            new_date=''
+            utc = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
+
+            utc_day1 = re.compile(r'\d{4}-\d{2}-\d{2}') # day (YYYY-MM-DD)
+            utc_day = re.compile(r'\d{8}') # day (YYYYMMDD)
+            utc_year = re.compile(r'\d{4}') # year (4-digit number)
+            if utc.search(old_date):
+                new_date = utc.search(old_date).group()
+                return new_date
+            elif utc_day1.search(old_date):
+                day = utc_day1.search(old_date).group()
+                new_date = day + 'T11:59:59Z'
+                return new_date
+            elif utc_day.search(old_date):
+                rep=re.findall(utc_day, old_date)[0]
+                new_date = rep[0:4]+'-'+rep[4:6]+'-'+rep[6:8] + 'T11:59:59Z'
+                return new_date
+            elif utc_year.search(old_date):
+                year = utc_year.search(old_date).group()
+                new_date = year + '-07-01T11:59:59Z'
+                return new_date
+            else:
+                return '' # if converting cannot be done, make date empty
+        except Exception, e:
+           print('[ERROR] : %s - in date2UTC replace old date %s by new date %s' % (e,old_date,new_date))
+           return ''
+        else:
+           return new_date
+
+    def map_identifiers(self, invalue):
+        """
+        Convert identifiers to data access links, i.e. to 'Source' (ds['url']) or 'PID','DOI' etc. pp
+ 
+        Copyright (C) 2015 by Heinrich Widmann.
+        Licensed under AGPLv3.
+        """
+        try:
+            ## idarr=invalue.split(";")
+            iddict=dict()
+            favurl=invalue[0]  ### idarr[0]
+  
+            for id in invalue :
+                if id.startswith('http://data.theeuropeanlibrary'):
+                    iddict['url']=id
+                elif id.startswith('ivo:'):
+                    iddict['IVO']='http://registry.euro-vo.org/result.jsp?searchMethod=GetResource&identifier='+id
+                    favurl=iddict['IVO']
+                elif id.startswith('10.'): ##HEW-??? or id.startswith('10.5286') or id.startswith('10.1007') :
+                    iddict['DOI'] = self.concat('http://dx.doi.org/',id)
+                    favurl=iddict['DOI']
+                elif 'dx.doi.org/' in id:
+                    iddict['DOI'] = id
+                    favurl=iddict['DOI']
+                elif 'doi:' in id: ## and 'DOI' not in iddict :
+                    iddict['DOI'] = 'http://dx.doi.org/doi:'+re.compile(".*doi:(.*)\s?.*").match(id).groups()[0].strip(']')
+                    favurl=iddict['DOI']
+                elif 'hdl.handle.net' in id:
+                    iddict['PID'] = id
+                    favurl=iddict['PID']
+                elif 'hdl:' in id:
+                    iddict['PID'] = id.replace('hdl:','http://hdl.handle.net/')
+                    favurl=iddict['PID']
+                ##  elif 'url' not in iddict: ##HEW!!?? bad performance --> and self.check_url(id) :
+                    ##     iddict['url']=id
+
+            if 'url' not in iddict :
+                iddict['url']=favurl
+        except Exception, e:
+            print('[ERROR] : %s - in map_identifiers %s can not converted !' % (e,invalue))
+            return None
+        else:
+            return iddict
+
+    def map_lang(self, invalue):
+        """
+        Convert languages and language codes into ISO names
+ 
+        Copyright (C) 2014 Mikael Karlsson.
+        Adapted for B2FIND 2014 Heinrich Widmann
+        Licensed under AGPLv3.
+        """
+
+        def mlang(language):
+            if '_' in language:
+                language = language.split('_')[0]
+            if ':' in language:
+                language = language.split(':')[1]
+            if len(language) == 2:
+                try: return iso639.languages.get(alpha2=language.lower())
+                except KeyError: pass
+            elif len(language) == 3:
+                try: return iso639.languages.get(alpha3=language.lower())
+                except KeyError: pass
+                except AttributeError: pass
+                try: return iso639.languages.get(terminology=language.lower())
+                except KeyError: pass
+                try: return iso639.languages.get(bibliographic=language.lower())
+                except KeyError: pass
+            else:
+                try: return iso639.languages.get(name=language.title())
+                except KeyError: pass
+                for l in re.split('[,.;: ]+', language):
+                    try: return iso639.languages.get(name=l.title())
+                    except KeyError: pass
+
+        newvalue=list()
+        for lang in invalue:
+            mcountry = mlang(lang)
+            if mcountry:
+                newvalue.append(mcountry.name)
+
+        return newvalue
+
+    def map_temporal(self,invalue):
+        """
+        Map date-times to B2FIND start and end time
+ 
+        Copyright (C) 2015 Heinrich Widmann
+        Licensed under AGPLv3.
+        """
+        desc=''
+        try:
+          if type(invalue) is list:
+              invalue=invalue[0]
+          if type(invalue) is dict :
+            if '@type' in invalue :
+              if invalue['@type'] == 'single':
+                 if "date" in invalue :       
+                   desc+=' %s : %s' % (invalue["@type"],invalue["date"])
+                   return (desc,self.date2UTC(invalue["date"]),self.date2UTC(invalue["date"]))
+                 else :
+                   desc+='%s' % invalue["@type"]
+                   return (desc,None,None)
+              elif invalue['@type'] == 'verbatim':
+                  if 'period' in invalue :
+                      desc+=' %s : %s' % (invalue["type"],invalue["period"])
+                  else:
+                      desc+='%s' % invalue["type"]
+                  return (desc,None,None)
+              elif invalue['@type'] == 'range':
+                  if 'start' in invalue and 'end' in invalue :
+                      desc+=' %s : ( %s - %s )' % (invalue['@type'],invalue["start"],invalue["end"])
+                      return (desc,self.date2UTC(invalue["start"]),self.date2UTC(invalue["end"]))
+                  else:
+                      desc+='%s' % invalue["@type"]
+                      return (desc,None,None)
+              elif 'start' in invalue and 'end' in invalue :
+                  desc+=' %s : ( %s - %s )' % ('range',invalue["start"],invalue["end"])
+                  return (desc,self.date2UTC(invalue["start"]),self.date2UTC(invalue["end"]))
+              else:
+                  return (desc,None,None)
+          else:
+            outlist=list()
+            invlist=invalue.split(';')
+            if len(invlist) == 1 :
+                try:
+                    desc+=' point in time : %s' % self.date2UTC(invlist[0]) 
+                    return (desc,self.date2UTC(invlist[0]),self.date2UTC(invlist[0]))
+                except ValueError:
+                    return (desc,None,None)
+##                else:
+##                    desc+=': ( %s - %s ) ' % (self.date2UTC(invlist[0]),self.date2UTC(invlist[0])) 
+##                    return (desc,self.date2UTC(invlist[0]),self.date2UTC(invlist[0]))
+            elif len(invlist) == 2 :
+                try:
+                    desc+=' period : ( %s - %s ) ' % (self.date2UTC(invlist[0]),self.date2UTC(invlist[1])) 
+                    return (desc,self.date2UTC(invlist[0]),self.date2UTC(invlist[1]))
+                except ValueError:
+                    return (desc,None,None)
+            else:
+                return (desc,None,None)
+        except Exception, e:
+           log.debug('[ERROR] : %s - in map_temporal %s can not converted !' % (e,invalue))
+           return (None,None,None)
+        else:
+            return (desc,None,None)
+
+    def map_discipl(self,invalue,disctab):
+        """
+        Convert disciplines along B2FIND disciplinary list
+ 
+        Copyright (C) 2014 Heinrich Widmann
+        Licensed under AGPLv3.
+        """
+        
+        retval=list()
+        if type(invalue) is not list :
+            inlist=re.split(r'[;&\s]\s*',invalue)
+            inlist.append(invalue)
+        else:
+            seplist=[re.split(r"[;&]",i) for i in invalue]
+            swlist=[re.findall(r"[\w']+",i) for i in invalue]
+            inlist=swlist+seplist
+            inlist=[item for sublist in inlist for item in sublist]
+        for indisc in inlist :
+           ##indisc=indisc.encode('ascii','ignore').capitalize()
+           indisc=indisc.encode('utf8').replace('\n',' ').replace('\r',' ').strip().title()
+           maxr=0.0
+           maxdisc=''
+           for line in disctab :
+             try:
+               disc=line[2].strip()
+               r=lvs.ratio(indisc,disc)
+             except Exception, e:
+                 print('[ERROR] %s in map_discipl : %s can not compared to %s !' % (e,indisc,disc))
+                 continue
+             if r > maxr  :
+                 maxdisc=disc
+                 maxr=r
+                 ##HEW-T                   print '--- %s \n|%s|%s| %f | %f' % (line,indisc,disc,r,maxr)
+           if maxr == 1 and indisc == maxdisc :
+               if verbose > 1 : print('  | Perfect match of %s : nothing to do' % indisc)
+               retval.append(indisc.strip())
+           elif maxr > 0.90 :
+               if verbose > 1 : print('   | Similarity ratio %f is > 0.90 : replace value >>%s<< with best match --> %s' % (maxr,indisc,maxdisc))
+               ##return maxdisc
+               ##print(indisc.strip())
+           else:
+               if verbose > 1 : print('   | Similarity ratio %f is < 0.90 compare value >>%s<< and discipline >>%s<<' % (maxr,indisc,maxdisc))
+               continue
+
+        if len(retval) > 0:
+            retval=list(OrderedDict.fromkeys(retval)) ## this elemenates real duplicates
+            return ';'.join(retval)
+        else:
+            return 'Not stated' 
+   
+    def cut(self,invalue,pattern,nfield=None):
+        """
+        Invalue is expected as list. Loop over invalue and for each elem : 
+           - If pattern is None truncate characters specified by nfield (e.g. ':4' first 4 char, '-2:' last 2 char, ...)
+        else if pattern is in invalue, split according to pattern and return field nfield (if 0 return the first found pattern),
+        else return invalue.
+
+        Copyright (C) 2015 Heinrich Widmann.
+        Licensed under AGPLv3.
+        """
+
+        outvalue=list()
+        if not isinstance(invalue,list): invalue = invalue.split()
+        for elem in invalue:
+                if pattern is None :
+                    if nfield :
+                        outvalue.append(elem[nfield])
+                    else:
+                        outvalue.append(elem)
+                else:
+                    rep=re.findall(pattern, elem)
+                    if len(rep) > 0 :
+                        outvalue.append(rep[nfield])
+                    else:
+                        outvalue.append(elem)
+                        
+        ##else:
+        ##    log.error('[ERROR] : cut expects as invalue (%s) a list' % invalue)
+            ## return None
+
+        return outvalue
+
+
+
+    def list2dictlist(self,invalue,valuearrsep):
+        """
+        transfer list of strings/dicts to list of dict's { "name" : "substr1" } and
+          - eliminate duplicates, numbers and 1-character- strings, ...      
+        """
+
+        dictlist=[]
+        valarr=[]
+        bad_chars = '(){}<>:'
+        if isinstance(invalue,dict):
+            invalue=invalue.values()
+        elif not isinstance(invalue,list):
+            invalue=invalue.split(';')
+            invalue=list(OrderedDict.fromkeys(invalue)) ## this eliminates real duplicates
+        for lentry in invalue :
+            try:
+                if type(lentry) is dict :
+                    if "value" in lentry:
+                        valarr.append(lentry["value"])
+                    else:
+                        valarr=lentry.values()
+                else:
+                    ##valarr=filter(None, re.split(r"([,\!?:;])+",lentry)) ## ['name']))
+                    valarr=re.findall('\[[^\]]*\]|\([^\)]*\)|\"[^\"]*\"|\S+',lentry)
+                for entry in valarr:
+                    entry="". join(c for c in entry if c not in bad_chars)
+                    if isinstance(entry,int) or len(entry) < 2 : continue
+                    entry=entry.encode('utf-8').strip()
+                    dictlist.append({ "name": entry.replace('/','-') })
+            except AttributeError, err :
+                log.error('[ERROR] %s in list2dictlist of lentry %s , entry %s' % (err,lentry,entry))
+                continue
+            except Exception, e:
+                log.error('[ERROR] %s in list2dictlist of lentry %s, entry %s ' % (e,lentry,entry))
+                continue
+        return dictlist[:12]
+
+    def uniq(self,input,joinsep=None):
+        uniqset = set(input)
+
+        ##if joinsep :
+        ##    return joinsep.join(list(set))
+        ##else :
+        return list(uniqset)
+
     def evalxpath(self, obj, expr, ns):
         # evaluates and parses XML etree object for xpath expr and returns the found values
         flist=re.split(r'[\(\),]',expr.strip()) ### r'[(]',expr.strip())
@@ -160,7 +481,7 @@ class MAPPER():
 
     def xpathmdmapper(self,xmldata,xrules,namespaces):
         # returns list or string, selected from xmldata by xpath rules (and namespaces)
-        print '   | %-10s | %-10s | %-10s |\n   -------------------------------' % ('Field','XPATH','Value')
+        if verbose > 1 : print '   | %-10s | %-10s | %-10s |\n   -------------------------------' % ('Field','XPATH','Value')
 
         jsondata=dict()
 
@@ -184,9 +505,9 @@ class MAPPER():
 
                 if retval and len(retval) > 0 :
                     jsondata[field]=retval ### .extend(retval)
-                    print '   | %-8s | %-10s | %-20s |' % (field,xpath,retval[:20])
+                    if verbose > 1 : print '   | %-8s | %-10s | %-20s |' % (field,xpath,retval[:20])
                 else:
-                    print '   | %-8s | %-10s | %-20s |' % (field,xpath,retval[:20])
+                    if verbose > 1 : print '   | %-8s | %-10s | %-20s |' % (field,xpath,retval[:20])
 
           except Exception as e:
               print '    | [ERROR] : %s in xpathmdmapper \n\tfield\t%s\n\txpath\t%s\n\tretvalue\t%s' % (e,field,line,retval)
@@ -218,6 +539,8 @@ class MAPPER():
         if not os.path.isfile(mapfile):
             print '[ERROR] Can not access mapfile %s' % mapfile
             return stats
+        print ' |- Mapfile\tmapfiles/%s-%s.xml' % (community,mdprefix)
+        print ' |- Output path\t%s/json' % (subsetdir)
 
         # get mapping rules and check namespaces
         mf = codecs.open(mapfile, "r", "utf-8")
@@ -228,9 +551,8 @@ class MAPPER():
             if ns:
                 namespaces[ns.group(3)]=ns.group(5)
                 continue
-        print '  |- Namespaces\t%s' % json.dumps(namespaces,sort_keys=True, indent=4)
+        print ' |- Namespaces\t%s' % json.dumps(namespaces,sort_keys=True, indent=4)
 
-        
         disctab = self.cv_disciplines() # instance of B2FIND discipline table
 
 
@@ -239,12 +561,15 @@ class MAPPER():
         stats['count'] = len(files)
         fcount = 0        
 
-        print ('  | %-4s | %-45s |\n   ------------------------------------------\n' % ('Rec #','Filename'))
+
+        print ' |-Output path\t %s/json' % subsetdir 
+        print '    |   | %-4s | %-45s |\n    ---------------------------------------------------------------' % ('#','File Identifier')
+
         for filename in files:
             fcount+=1
             jsondata = dict()
             infile='%s/xml/%s' % (subsetdir,filename)
-            print '| %-4d | %-45s |' % (fcount,os.path.basename(filename))
+            print '    | m | %-4d | %-45s |' % (fcount,os.path.basename(filename))
 
             if ( os.path.getsize(infile) > 0 ):                
                 with open(infile, 'r') as f: ## load and parse raw xml rsp. json
@@ -262,24 +587,24 @@ class MAPPER():
             ## XPATH converter
             try:
                 # Run Python XPATH converter
-                print '  --> xpathmdmapper '
+                if verbose > 1 : print ' | Start XPATH selection'
                 jsondata=self.xpathmdmapper(xmldata,maprules,namespaces)
             except Exception as e:
                 print '    | [ERROR] %s : during XPATH processing' % e
                 stats['ecount'] += 1
                 continue
             ## map onto B2FIND schema
-            print '  --> map onto B2FIND schema '
-            print ('   | %-10s :  %-20s\n   ----------------------------------' % ('B2F facet','Value'))
+            if verbose > 1 : print '  | Map onto B2FIND schema '
+            if verbose > 1 : print ('   | %-10s :  %-20s\n   ----------------------------------' % ('B2F facet','Value'))
             for facetdict in self.b2findfields.values() :
                 facet=facetdict["ckanName"]
                 if facet in jsondata:
-                    print ('   | %-10s : %-20s' % (facet,jsondata[facet]))
+                    if verbose > 1 : print ('   | %-10s : %-20s' % (facet,jsondata[facet]))
                     try:
                         facetmeth='map_'+facet
                         if facet == 'author':
                             jsondata[facet] = self.uniq(self.cut(jsondata[facet],'\(\d\d\d\d\)',1))
-                            jsondata[facet] = getattr(self,facetmeth) 
+                            ## jsondata[facet] = getattr(self,facetmeth) 
                         elif facet == 'tags':
                             jsondata[facet] = self.list2dictlist(jsondata[facet]," ")
                         elif facet == 'url':
@@ -332,7 +657,7 @@ class MAPPER():
                         continue
                 
                 else: # B2FIND facet not in jsondata
-                    print ('   | %-10s : %-20s' % (facet,'N/A'))
+                    if verbose > 1 : print ('   | %-10s : %-20s' % (facet,'N/A'))
 
                 ## decode and convert to JSON format
                 try:
@@ -407,18 +732,18 @@ class CKAN_CLIENT(object):
 
         try:
             request = Request(action_url,data_string)
-            print('request %s' % request)            
+            if verbose > 1 : print('request %s' % request)            
             if (self.api_key): request.add_header('Authorization', self.api_key)
-            print('api_key %s....' % self.api_key[:10])
+            ##print('api_key %s....' % self.api_key[:10])
             response = urlopen(request)                
-            print('response %s' % response)            
+            if verbose > 1 : print('response %s' % response)            
         except HTTPError as e:
-            print('%s : The server %s couldn\'t fulfill the action %s.' % (e,self.ip_host,action))
+            if verbose > 1 : print('%s : The server %s couldn\'t fulfill the action %s.' % (e,self.ip_host,action))
             if ( e.code == 403 ):
                 print('Access forbidden, maybe the API key is not valid?')
                 exit(e.code)
             elif ( e.code == 409 and action == 'package_create'):
-                print('\tMaybe the dataset already exists => try to update the package')
+                if verbose > 2 : print('\tMaybe the dataset already exists => try to update the package')
                 self.action('package_update',data_dict)
             elif ( e.code == 409):
                 print('\tMaybe you have a parameter error?')
@@ -434,7 +759,7 @@ class CKAN_CLIENT(object):
             return {"success" : False}
         else :
             out = json.loads(response.read())
-            print('out %s' % out)
+            if verbose > 2 : print('out %s' % out)
             assert response.code >= 200
             return out
 
@@ -473,22 +798,10 @@ class UPLOADER(object):
                 elif key in ["title","notes"] :
                     jsondata[key]='\n'.join([x for x in jsondata[key] if x is not None])
                 if verbose > 1 : print(' | %-15s | %-25s' % (key,jsondata[key]))
-                if key in ["title","author","notes"] : ## Specific coding !!??
-                    if jsondata['group'] in ['sdl'] :
-                        try:
-                            if verbose > 1 : print('Before encoding :\t%s:%s' % (key,jsondata[key]))
-                            jsondata[key]=jsondata[key].encode("iso-8859-1") ## encode to display e.g. 'Umlauts' correctly 
-                            if verbose > 1 : print('After encoding  :\t%s:%s' % (key,jsondata[key]))
-                        except UnicodeEncodeError as e :
-                            if verbose > 0 : print("%s : ( %s:%s[...] )" % (e,key,jsondata[key]))
-                        except Exception as e:
-                            if verbose > 1 : print('%s : ( %s:%s[...] )' % (e,key,jsondata[key[20]]))
-                        finally:
-                            pass
                         
         jsondata['extras']=list()
         extrafields=sorted(set(self.b2findfields.keys()) - set(self.b2fckandeffields))
-        print(' CKAN extra fields')
+        if verbose > 1 : print(' CKAN extra fields')
         for key in extrafields :
             if key in jsondata :
                 if key in ['Contact','Format','Language','Publisher','PublicationYear','Checksum','Rights']:
@@ -503,9 +816,9 @@ class UPLOADER(object):
                      "value" : value
                 })
                 del jsondata[key]
-                print(' | %-15s | %-25s' % (key,value))
+                if verbose > 1 : print(' | %-15s | %-25s' % (key,value))
             else:
-                print(' | %-15s | %-25s' % (key,'-- No data available'))
+                if verbose > 1 : print(' | %-15s | %-25s' % (key,'-- No data available'))
 
         return jsondata
 
@@ -532,7 +845,7 @@ class UPLOADER(object):
         mandFields=['title','oai_identifier']
         for field in mandFields :
             if field not in jsondata: ##  or jsondata[field] == ''):
-                print("The andatory field '%s' is missing" % field)
+                print("The mandatory field '%s' is missing" % field)
                 return None
 
         identFields=['DOI','PID','url']
@@ -548,7 +861,7 @@ class UPLOADER(object):
             try:
                 datetime.datetime.strptime(jsondata['PublicationYear'][0], '%Y')
             except (ValueError,TypeError) as e:
-                print("%s : Facet %s must be in format YYYY, given valueis : %s" % (e,'PublicationYear',jsondata['PublicationYear']))
+                print("%s : Facet %s must be in format YYYY, given values : %s" % (e,'PublicationYear',jsondata['PublicationYear']))
                 ##HEW-D raise Exception("Error %s : Key %s value %s has incorrect data format, should be YYYY" % (e,'PublicationYear',jsondata['PublicationYear']))
                 # delete this field from the jsondata:
                 del jsondata['PublicationYear']
@@ -641,7 +954,7 @@ class UPLOADER(object):
                 print('File %s failed check and will not been uploaded' % filename)
                 continue
 
-            jsondata['group']=community
+##            jsondata['group']=community
 
             jsondata=self.json2ckan(jsondata)
 
@@ -652,13 +965,34 @@ class UPLOADER(object):
             jsondata["state"]='active'
             jsondata["groups"]=[{ "name" : community }]
             jsondata["owner_org"]="eudat"
+
+            ## write to JSON file
+            jsonfilename=os.path.splitext(filename)[0]+'.json'
+
+            if (not os.path.isdir(subsetdir+'/ckan')):
+                os.makedirs(subsetdir+'/ckan')
+
+            with io.open(subsetdir+'/ckan/'+filename, 'w') as json_file:
+                try:
+                    if verbose > 2 : print('   | [INFO] decode json data')
+                    data = json.dumps(jsondata,sort_keys = True, indent = 4).decode('utf8')
+                except Exception as e:
+                    print('    | [ERROR] %s : Cannot decode jsondata %s' % (e,jsondata))
+                try:
+                    if verbose > 2 : print('   | [INFO] save json file')
+                    json_file.write(data)
+                except TypeError, err :
+                    print('    | [ERROR] Cannot write json file %s : %s' % (outpath+'/'+filename,err))
+                except Exception as e:
+                    print('    | [ERROR] %s : Cannot write json file %s' % (e,outpath+'/'+filename))
+
         
-            print('\t - Try to create dataset %s' % ds_id)
+            if verbose > 2 : print('\t - Try to create dataset %s' % ds_id)
             results = self.CKAN.action('package_create',jsondata)
             if (results and results['success']):
                 rvalue = 1
             else:
-                print('\t - Creation failed. Try to update instead.')
+                if verbose > 2 : print('\t - Creation failed. Try to update instead.')
                 results = self.CKAN.action('package_update',jsondata)
                 if (results and results['success']):
                     rvalue = 2
@@ -791,22 +1125,21 @@ def main():
             sys.exit(-1)
 
     # Processing   
-    if (options.mode == 'h'):  ## HARVESTING mode:
-        print '\n|- Harvesting\n |-community\t%s\n |-source\t%s\n |-verb\t%s\n |-MD format\t%s\n |-subset\t%s started : %s' % (options.community,options.source,options.verb,options.mdprefix,options.subset,time.strftime("%Y-%m-%d %H:%M:%S"))
+    if (options.mode == 'h') or (options.mode == None) :  ## HARVESTING mode:
+        print '\n|- Harvesting started : %s \n |-community\t%s\n |-source\t%s\n |-verb\t\t%s\n |-MD format\t%s\n |-subset\t%s' % (time.strftime("%Y-%m-%d %H:%M:%S"),options.community,options.source,options.verb,options.mdprefix,options.subset)
         HV = HARVESTER(options.outdir)
         results = HV.harvest(options.community,options.source,options.verb,options.mdprefix,options.subset)
         print results
-    elif (options.mode == 'm'):  ## MAPPING mode:
-        print '\n|- Mapping started : %s' % time.strftime("%Y-%m-%d %H:%M:%S")
+    if (options.mode == 'm') or (options.mode == None) :  ## MAPPING mode:
+        print '\n|- Mapping started : %s \n |-community\t%s\n |-MD format\t%s\n |-subset\t%s' % (time.strftime("%Y-%m-%d %H:%M:%S"),options.community,options.mdprefix,options.subset)
         MP = MAPPER(options.outdir)
         results = MP.map(options.community,options.verb,options.mdprefix,options.subset)
-    elif (options.mode == 'u'):  ## UPLOADING mode:
-        print '\n|- Uploading started : %s' % time.strftime("%Y-%m-%d %H:%M:%S")
+        print results
+    if (options.mode == 'u') or (options.mode == None) :  ## UPLOADING mode:
+        print '\n|- Uploading started : %s\n |-community\t%s\n |-subset\t%s\n |-Catalog\t%s' % (time.strftime("%Y-%m-%d %H:%M:%S"),options.community,options.subset,options.iphost)
         CKAN = CKAN_CLIENT(options.iphost,options.auth)
         UP = UPLOADER(CKAN,options.outdir)
         results = UP.upload(options.community,options.iphost,options.mdprefix,options.subset)
-
-
     
 if __name__ == "__main__":
     main()
