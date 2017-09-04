@@ -41,7 +41,7 @@ class HARVESTER():
     def __init__ (self, base_outdir):
         self.base_outdir = base_outdir
 
-    def harvest(self, community, source, verb, mdprefix, subset):
+    def harvest(self, community, source, verb, mdprefix, subset, fromdate):
         # harvest (HARVESTER object, community, source, verb, mdprefix, subset)
         # harvests all files with <mdprefix> and <subset> from <source> 
         # via sickle module and store those to hard drive.
@@ -62,7 +62,10 @@ class HARVESTER():
         sickle = SickleClass.Sickle(source, max_retries=3, timeout=300)
 
         try:
-            records = sickle.ListRecords(metadataPrefix=mdprefix,set=subset)
+            records = sickle.ListRecords(
+                **{'metadataPrefix': mdprefix,
+                   'set' : subset,
+                   'from' : fromdate})
         except Exception, e:
             print "[ERROR] %s" % e
             return -1
@@ -325,6 +328,25 @@ class MAPPER():
         else:
             return (desc,None,None)
 
+    def map_checksum(self,invalue):
+        """
+        Filter out md checksum from value list
+ 
+        Copyright (C) 2016 Heinrich Widmann
+        Licensed under AGPLv3.
+        """
+        if type(invalue) is not list :
+            inlist=re.split(r'[;&\s]\s*',invalue)
+            inlist.append(invalue)
+        else:
+            inlist=invalue
+
+        for inval in inlist: 
+            if re.match("[a-fA-F0-9]{32}",inval) : ## checks for MD5 checksums !!! 
+                return inval  
+
+        return None
+
     def map_discipl(self,invalue,disctab):
         """
         Convert disciplines along B2FIND disciplinary list
@@ -415,9 +437,10 @@ class MAPPER():
           - eliminate duplicates, numbers and 1-character- strings, ...      
         """
 
+        print 'ii %s' % invalue
         dictlist=[]
         valarr=[]
-        bad_chars = '(){}<>:'
+        bad_chars = '(){}<>:,'
         if isinstance(invalue,dict):
             invalue=invalue.values()
         elif not isinstance(invalue,list):
@@ -434,6 +457,7 @@ class MAPPER():
                     ##valarr=filter(None, re.split(r"([,\!?:;])+",lentry)) ## ['name']))
                     valarr=re.findall('\[[^\]]*\]|\([^\)]*\)|\"[^\"]*\"|\S+',lentry)
                 for entry in valarr:
+                    print 'eeee %s' % entry
                     entry="". join(c for c in entry if c not in bad_chars)
                     if isinstance(entry,int) or len(entry) < 2 : continue
                     entry=entry.encode('utf-8').strip()
@@ -453,6 +477,16 @@ class MAPPER():
         ##    return joinsep.join(list(set))
         ##else :
         return list(uniqset)
+
+    def concat(self,str1,str2):
+        """
+        concatenete given strings
+
+        Copyright (C) 2015 Heinrich Widmann.
+        Licensed under AGPLv3.
+        """
+
+        return str1+str2
 
     def evalxpath(self, obj, expr, ns):
         # evaluates and parses XML etree object for xpath expr and returns the found values
@@ -1096,6 +1130,7 @@ def options_parser(modes):
     group_harvest = optparse.OptionGroup(p, "Harvest Options",
         "These options will be required to harvest metadata records from a data provider (by default via OAI-PMH from the URL given by SOURCE).")
     group_harvest.add_option('--verb', help="Verbs or requests defining the mode of harvesting, can be ListRecords(default) or ListIdentifers if OAI-PMH used or e.g. 'works' if JSON-API is used",default='ListRecords', metavar='STRING')
+    group_harvest.add_option('--fromdate', help="Filter harvested files by date (Format: YYYY-MM-DD).", default=None, metavar='DATE')
 
     group_upload = optparse.OptionGroup(p, "Upload Options",
         "These options will be required to upload datasets to a CKAN repository.")
@@ -1126,9 +1161,9 @@ def main():
 
     # Processing   
     if (options.mode == 'h') or (options.mode == None) :  ## HARVESTING mode:
-        print '\n|- Harvesting started : %s \n |-community\t%s\n |-source\t%s\n |-verb\t\t%s\n |-MD format\t%s\n |-subset\t%s' % (time.strftime("%Y-%m-%d %H:%M:%S"),options.community,options.source,options.verb,options.mdprefix,options.subset)
+        print '\n|- Harvesting started : %s \n |-community\t%s\n |-source\t%s\n |-verb\t\t%s\n |-MD format\t%s\n |-subset\t%s\n |-fromdate\t%s' % (time.strftime("%Y-%m-%d %H:%M:%S"),options.community,options.source,options.verb,options.mdprefix,options.subset,options.fromdate)
         HV = HARVESTER(options.outdir)
-        results = HV.harvest(options.community,options.source,options.verb,options.mdprefix,options.subset)
+        results = HV.harvest(options.community,options.source,options.verb,options.mdprefix,options.subset,options.fromdate)
         print results
     if (options.mode == 'm') or (options.mode == None) :  ## MAPPING mode:
         print '\n|- Mapping started : %s \n |-community\t%s\n |-MD format\t%s\n |-subset\t%s' % (time.strftime("%Y-%m-%d %H:%M:%S"),options.community,options.mdprefix,options.subset)
