@@ -14,7 +14,7 @@ This training module takes you through an example workflow for data management. 
 
 The ideal workflow is shown in figure 1.
 
-<img align="centre" src="img/IdealWorkflow.png" width="800px">
+<img align="centre" src="img/B2ServiceSuite.png" width="800px">
 
 Figure 2 shows how the situation is at teh moment, i.e. how the EUDAT services can used right now.
 
