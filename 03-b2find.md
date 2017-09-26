@@ -11,24 +11,25 @@ Supported and tested are
 (There are known problems by using Windows' Internet Explorer
 
 ## 1. The main user interface 
+<p>
 We use here the training instance of B2FIND accessible at http://trng-b2find.eudat.eu . The entry page is shown in figure 1.
 <img align="centre" src="img/B2FIND_UI.png">
 
 Directly from there you can submit a free text search.
 <img align="centre" src="img/B2FIND_freeTextSearch.png">
-
+</p>
 ## 2. Faceted search
 If you click on `FACETED SEARCH` you can filter for several fields, as shown in figure 3 :
-<img align="centre" src="img/img/B2FIND_facettedSearch_1.png">
+<img align="centre" src="img/B2FIND_facettedSearch_1.png">
 
 For example you can use the auto complete functionality of the facet `Creator` to choose the Createor `Le Franc, Yann` :
-<img align="centre" src="img/img/B2FIND_facettedSearch_2.png">
+<img align="centre" src="img/B2FIND_facettedSearch_2.png">
 
 If you select all datasets that are associated by the `Discipline` *Biology*, three entries are found. 
-<img align="centre" src="img/img/B2FIND_facettedSearch_3.png">
+<img align="centre" src="img/B2FIND_facettedSearch_3.png">
 
 to search for keywords - called `Tags` in the B2FIND portal - is as well possible. In the shown example nine datasets that are tagged with the keyword *keyword1* are listed.
-<img align="centre" src="img/img/B2FIND_facettedSearch_4.png">
+<img align="centre" src="img/B2FIND_facettedSearch_4.png">
 
 
 ## 3. Dataset Display

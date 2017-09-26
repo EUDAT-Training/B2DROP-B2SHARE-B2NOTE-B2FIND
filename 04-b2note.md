@@ -33,8 +33,8 @@ After login you can now create an annotation by clicking ofn 'Craete annotation'
 ## 3. Retrieve a record
 You can now search in the B2NOTE interface for annotated records.
 
-<img align="centre" src="B2NOTE_RetrieveRecord_1.png">
-<img align="centre" src="B2NOTE_RetrieveRecord_2.png">
-<img align="centre" src="B2NOTE_RetrieveRecord_3.png">
-<img align="centre" src="B2NOTE_RetrieveRecord_4.png">
-<img align="centre" src="B2NOTE_RetrieveRecord_5.png">
+<img align="centre" src="img/B2NOTE_RetrieveRecord_1.png">
+<img align="centre" src="img/B2NOTE_RetrieveRecord_2.png">
+<img align="centre" src="img/B2NOTE_RetrieveRecord_3.png">
+<img align="centre" src="img/B2NOTE_RetrieveRecord_4.png">
+<img align="centre" src="img/B2NOTE_RetrieveRecord_5.png">
