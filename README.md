@@ -11,8 +11,9 @@
 <img align="right" src="img/B2DROP.png" width="211px">
 -->
 
-<p>
 ## Contents
+
+<p>
 This training module takes you through an example workflow for data management. You will use **B2DROP** as a workspace environment, where you can create, change and delete data files. We will investigate how this data can be published directly in **B2SHARE**, i.e. how to create appropriate metadata and subsequently publishing the metadata and the data in a B2SHARE record. Because you have need an user account to upload files to B2SHARE, we explain how to register and login via **B2ACCESS** at B2SHARE. Based on the created metadata in B2SHARE you can search and retrieve data through EUDAT's metadata platform **B2FIND**. Once data is published, it cannot be revised easily. The **B2NOTE** service is made for annotating published data with extra metadata. 
 
 <!--
